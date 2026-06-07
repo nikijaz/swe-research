@@ -1,0 +1,332 @@
+@startuml
+title MTProto Network Layer
+
+class TelegramServer <<external>> {
+  --
+}
+
+class CdnEdge <<external>> {
+  --
+}
+
+class RequestSender {
+  + targetDataCentre : Integer
+  + orderingDependency : Integer
+  + minimumWaitInterval : Integer
+  --
+  + setCompletionHandler()
+  + setFailureHandler()
+  + setOrderingDependency()
+  + setMinimumWaitInterval()
+  + submitRequest()
+}
+
+class ProtocolEngine {
+  + mainDataCentre : Integer
+  --
+  + dispatchRequest()
+  + cancelRequest()
+  + queryEngineState()
+  + designateMainDataCentre()
+  + fetchServerConfiguration()
+  + restartSession()
+  + terminateSession()
+  + initiateLogout()
+  + destroyStaleKeys()
+}
+
+class ShiftedDataCentreIdentifier {
+  + numericDataCentreId : Integer
+  + purposeShift : Integer
+  --
+  + isMainStream()
+  + isDownloadStream()
+  + isUploadStream()
+}
+
+class ProtocolSession {
+  + shiftedIdentifier : ShiftedDataCentreIdentifier
+  --
+  + restartSession()
+  + stopSession()
+  + terminateSession()
+  + beginKeyCreation()
+  + releaseKeyCreation()
+  + getPersistentKey()
+  + getTemporaryKey()
+  + enqueueOutboundRequest()
+  + enqueueReceivedData()
+  + enqueueResumeSignal()
+  + handleConnectionStateChange()
+}
+
+class SessionWorker {
+  + currentSalt : Integer
+  + timeOffset : Integer
+  --
+  + executeOutboundSendCycle()
+  + executeInboundReceiveCycle()
+  + encryptOutboundPacket()
+  + decryptInboundPacket()
+  + groupRequestsIntoContainer()
+  + recordPendingAcknowledgements()
+  + resendUnacknowledgedMessages()
+  + sendKeepalivePing()
+  + applySaltCorrection()
+  + applyTimeCorrection()
+  + dispatchDecodedResult()
+  + selectFastestTransport()
+}
+
+interface ConnectionAbstraction {
+  --
+  + openConnection()
+  + transmitBytes()
+  + closeConnection()
+  + reportConnectionState()
+  + reportTransportType()
+  + signalDataReceived()
+  + signalConnectionEstablished()
+  + signalConnectionLost()
+  + signalConnectionError()
+}
+
+class TransportConnection {
+  + connectionState : String
+  + transportType : String
+  --
+  + openConnection()
+  + transmitBytes()
+  + closeConnection()
+  + reportConnectionState()
+  + reportTransportType()
+}
+
+class TcpConnection {
+  + hostAddress : String
+  + port : Integer
+  --
+  + openConnection()
+  + transmitBytes()
+  + closeConnection()
+}
+
+class HttpConnection {
+  + hostAddress : String
+  + port : Integer
+  --
+  + openConnection()
+  + transmitBytes()
+  + closeConnection()
+}
+
+class TlsConnection {
+  + hostAddress : String
+  + port : Integer
+  --
+  + openConnection()
+  + transmitBytes()
+  + closeConnection()
+}
+
+class ResolvingConnection {
+  + targetDomain : String
+  + childConnection : TransportConnection
+  --
+  + resolveDomainThenConnect()
+  + delegateToChildConnection()
+}
+
+abstract class AbstractSocket {
+  + hostAddress : String
+  + port : Integer
+  --
+  + openSocket()
+  + writeByteStream()
+  + closeSocket()
+}
+
+class TcpSocket {
+  + hostAddress : String
+  + port : Integer
+  --
+  + openSocket()
+  + writeByteStream()
+  + closeSocket()
+}
+
+class TlsSocket {
+  + hostAddress : String
+  + port : Integer
+  --
+  + openSocket()
+  + writeByteStream()
+  + closeSocket()
+}
+
+class DataCentreRegistry {
+  + deploymentEnvironment : String
+  + cdnConfiguration : String
+  --
+  + resolveEndpoint()
+  + classifyShiftedIdentifier()
+  + validateProxySecret()
+  + getCdnPublicKeys()
+  + registerChangeHandler()
+}
+
+class DataCentre {
+  + numericIdentifier : Integer
+  + persistentKey : AuthorizationKey
+  + temporaryKey : AuthorizationKey
+  + initializationStatus : Boolean
+  --
+  + designateKeyCreationType()
+}
+
+class AuthorizationKey {
+  + rawKeyMaterial : String
+  + keyType : String
+  + owningDataCentreId : Integer
+  + keyIdentifier : Integer
+  + expiryTimestamp : Integer
+  --
+  + prepareSymmetricEncryption()
+}
+
+note right of AuthorizationKey
+  keyType values: persistent,
+  temporary-regular,
+  temporary-media
+end note
+
+class KeyCreator {
+  + serverFingerprint : Integer
+  --
+  + sendPrimeAndQuotientRequest()
+  + processServerDhResponse()
+  + sendClientDhParameters()
+  + completeKeyGeneration()
+}
+
+class KeyBinder {
+  + bindState : String
+  --
+  + prepareBindRequest()
+  + handleServerBindResponse()
+}
+
+class BoundKeyCreator {
+  + keyCreator : KeyCreator
+  + keyBinder : KeyBinder
+  --
+  + createAndBindTemporaryKey()
+}
+
+class RsaPublicKey {
+  + keyFingerprint : Integer
+  --
+  + encryptPayload()
+}
+
+class ConfigLoader {
+  + specialEndpointCount : Integer
+  --
+  + fetchServerConfiguration()
+  + refreshServerConfiguration()
+  + registerSpecialEndpoints()
+  + selectSpecialLoader()
+}
+
+class DomainResolver {
+  + cacheExpiryInterval : Integer
+  --
+  + resolveDomainToEndpoints()
+  + getCachedEndpoints()
+}
+
+class ProtocolResponse {
+  + originatingRequestId : Integer
+  + decodedPayload : String
+  + outerMessageId : Integer
+  + messageSequenceNumber : Integer
+  --
+}
+
+class ProtocolError {
+  + numericErrorCode : Integer
+  + errorTypeLabel : String
+  --
+  + isFloodError()
+  + isTemporaryError()
+  + isDefaultHandledError()
+}
+
+class SerializedRequest {
+  + assignedMessageId : Integer
+  + assignedSequenceNumber : Integer
+  + paddedBuffer : String
+  + acknowledgementRequired : Boolean
+  --
+}
+
+class ReceivedIdentifiersManager {
+  + seenCount : Integer
+  --
+  + recordIncomingIdentifier()
+  + hasBeenSeen()
+  + collectPendingAcknowledgements()
+}
+
+
+RequestSender ..> ProtocolEngine : sends through
+
+ProtocolEngine "1" *-- "0..*" ProtocolSession : owns
+ProtocolEngine "1" *-- "1" DataCentreRegistry : owns
+ProtocolEngine "1" *-- "1" ConfigLoader : owns
+ProtocolEngine ..> ShiftedDataCentreIdentifier : routes by
+ProtocolEngine ..> ProtocolResponse : delivers
+ProtocolEngine ..> ProtocolError : reports
+
+ProtocolSession "1" *-- "1" SessionWorker : owns
+ProtocolSession "1" o-- "1" DataCentre : references
+ProtocolSession "1" *-- "0..1" KeyCreator : owns during key creation
+ProtocolSession "1" *-- "0..1" KeyBinder : owns during key creation
+ProtocolSession ..> ShiftedDataCentreIdentifier : identified by
+
+SessionWorker "1" *-- "1..*" TransportConnection : owns
+SessionWorker ..> SerializedRequest : prepares
+SessionWorker ..> ReceivedIdentifiersManager : uses
+SessionWorker ..> ProtocolResponse : dispatches
+SessionWorker ..> AuthorizationKey : uses for encryption
+
+TransportConnection ..|> ConnectionAbstraction
+TcpConnection --|> TransportConnection
+HttpConnection --|> TransportConnection
+TlsConnection --|> TransportConnection
+ResolvingConnection --|> TransportConnection
+ResolvingConnection *-- TransportConnection : delegates to child
+
+TcpConnection *-- AbstractSocket
+TlsConnection *-- AbstractSocket
+TcpSocket --|> AbstractSocket
+TlsSocket --|> AbstractSocket
+
+TransportConnection --> TelegramServer : network link
+
+DataCentreRegistry "1" *-- "0..*" DataCentre : catalogues
+
+DataCentre "1" *-- "0..2" AuthorizationKey : holds
+
+KeyCreator ..> RsaPublicKey : uses
+KeyCreator ..> AuthorizationKey : produces
+
+BoundKeyCreator *-- KeyCreator
+BoundKeyCreator *-- KeyBinder
+
+ConfigLoader *-- DomainResolver : uses
+ConfigLoader ..> DataCentreRegistry : updates
+
+DataCentreRegistry ..> CdnEdge : resolves CDN endpoints
+
+@enduml

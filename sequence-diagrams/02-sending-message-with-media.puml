@@ -1,0 +1,139 @@
+@startuml
+title Sending a Message with Media Attachment
+
+actor "User" as User
+participant "Main Content Widget" as MCW
+participant "API Facade" as API
+participant "Task Queue" as TQ
+participant "File Preparation Task" as FPT
+participant "Upload Manager" as UM
+participant "Histories Registry" as HR
+participant "History" as H
+participant "Data Model" as DM
+participant "Protocol Engine" as PE
+participant "Telegram Server" as TS
+participant "Update Dispatcher" as UD
+participant "Change Notifier" as CN
+
+== File Selection and Preparation ==
+
+User -> MCW : select file and confirm send
+MCW -> API : send-files operation\n(file, peer context, message options)
+API -> TQ : enqueue File Preparation Task
+
+activate TQ
+TQ -> FPT : run on worker thread
+activate FPT
+FPT -> FPT : read file bytes
+FPT -> FPT : generate thumbnails
+FPT -> FPT : compute metadata and file identifier
+FPT --> TQ : upload-ready descriptor
+deactivate FPT
+TQ --> API : preparation complete
+deactivate TQ
+
+== Local Message Creation ==
+
+API -> DM : register random-identifier to local message identifier mapping
+API -> H : create Message Item\n(local id, random id, status: sending)
+H -> CN : publish message add event
+CN --> MCW : local message appears in History view
+
+note right of H
+  Message is visible immediately
+  before upload completes.
+end note
+
+== Parallel Upload ==
+
+API -> UM : upload descriptor
+activate UM
+UM -> UM : split file into parts
+
+loop for each part group (parallel)
+    UM -> PE : upload part\n(shifted upload data-centre identifier)
+    activate PE
+    PE -> TS : part data
+    TS --> PE : part acknowledgement
+    PE --> UM : part confirmed
+    deactivate PE
+    UM -> H : update upload progress on Message Item
+end
+
+alt upload part fails
+    UM -> UM : retry part upload
+    alt persistent failure
+        UM --> API : upload failed
+        API -> H : mark Message Item as failed
+        H -> CN : publish message change event
+        CN --> MCW : History view refreshes (failed state)
+    end
+end
+
+UM --> API : document-ready or photo-ready event
+deactivate UM
+
+== Send-Media Request Construction ==
+
+API -> API : build input media\n(uploaded file reference)
+API -> API : apply message flags\n(reply, silent, scheduled, send-as, effect)
+
+alt per-peer send restrictions or slow-mode active
+    API -> API : check send restrictions for peer
+    API --> MCW : block send, show restriction notice
+end
+
+alt paid-message stars required
+    API --> MCW : prompt stars approval
+    User -> MCW : confirm stars payment
+end
+
+== Request Dispatch ==
+
+API -> HR : send prepared message\n(peer, input media, flags)
+activate HR
+HR -> HR : queue request per History
+HR -> PE : dispatch send-media request
+activate PE
+PE -> TS : send-media request
+TS --> PE : updates result
+PE --> HR : updates result
+deactivate PE
+HR --> API : updates result
+deactivate HR
+
+alt send-media request fails
+    PE --> HR : Protocol Error
+    HR --> API : send failed
+    API -> H : mark Message Item as failed\n(by random identifier)
+    H -> CN : publish message change event
+    CN --> MCW : History view refreshes (failed state)
+end
+
+== Update Application ==
+
+API -> UD : apply updates result
+activate UD
+UD -> DM : resolve random identifier to server message identifier
+DM -> H : replace local Message Item with server-confirmed Message Item
+H -> CN : publish message and history change events
+deactivate UD
+CN --> MCW : History view refreshes (confirmed state)
+
+== Album Edge Case ==
+
+note over API, UM
+  Multiple files form an album.
+  Parts for each file upload independently and in parallel.
+  The send-media album request is dispatched
+  only after all album items are ready.
+end note
+
+== Cancel or Pause Edge Case ==
+
+note over User, UM
+  The User may pause or cancel an upload per message identifier.
+  Cancellation removes the local Message Item from the History.
+end note
+
+@enduml

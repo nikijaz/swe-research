@@ -1,0 +1,277 @@
+@startuml
+title Data Model and Session Store
+
+
+class DomainContainer {
+  --
+  + activateAccount()
+  + aggregateUnreadBadge()
+}
+
+class Account {
+  --
+}
+
+class Session {
+  + ownerUserId : Integer
+  + mainDataCentreId : Integer
+  --
+  + persistSettings()
+}
+
+class SessionSettings {
+  --
+  + saveToStorage()
+  + loadFromStorage()
+}
+
+class ApiFacade {
+  --
+  + dispatchTypedRequest()
+  + applyServerResultToDataModel()
+}
+
+class ProtocolEngine {
+  --
+}
+
+
+class DataModel {
+  --
+  + ingestPeerVectors()
+  + ingestPhotoVectors()
+  + ingestDocumentVectors()
+  + ingestMessageVectors()
+  + registerOutgoingMessage()
+  + deregisterMessage()
+  + allocateLocalMessageId()
+  + bindRandomIdToServerId()
+  + recomputeUnreadBadge()
+  + scheduleSelfDestruct()
+  + scheduleTimeToLiveExpiry()
+  + retainMediaViewInCache()
+  + pinnedConversationOrder()
+}
+
+class ChangeNotifier {
+  --
+  + publishPeerChangeEvent()
+  + publishNameChangeEvent()
+  + publishHistoryChangeEvent()
+  + publishMessageChangeEvent()
+  + publishTopicChangeEvent()
+  + publishDialogEntryChangeEvent()
+  + publishStoryChangeEvent()
+  + flushBatchedNotifications()
+}
+
+class HistoriesRegistry {
+  --
+  + lookUpHistoryForPeer()
+  + markInboxReadForPeer()
+  + dispatchPreparedMessage()
+  + applyPeerDialogResponse()
+  + requestDialogEntryForPeer()
+}
+
+class DialogsList {
+  + owningFolderIdentifier : Integer
+  --
+  + conversationEntries()
+  + pinConversationEntry()
+  + unpinConversationEntry()
+  + unreadEntryCount()
+}
+
+class StickersRegistry {
+  --
+  + installedSets()
+  + recentSets()
+  + favouriteSets()
+  + featuredSets()
+  + archivedSets()
+  + maskSets()
+  + emojiSets()
+  + recordSetUpdateTimestamp()
+}
+
+class GroupCallRegistry {
+  --
+  + lookUpCallById()
+  + registerCallById()
+  + deregisterCallById()
+}
+
+class ReactionsRegistry {
+  --
+  + availableReactionTypes()
+  + lookUpReactionById()
+  + registerReaction()
+  + deregisterReaction()
+}
+
+class Reaction {
+  + reactionId : String
+  + displayLabel : String
+  + associatedMediaAsset : MediaEntity
+  --
+}
+
+
+abstract class Peer {
+  + peerId : Integer
+  --
+  + displayName()
+}
+
+class UserEntity {
+  + botFlag : Boolean
+  + contactPhoneNumber : String
+  --
+}
+
+class ChatEntity {
+  + memberCount : Integer
+  + adminRightsDescriptor : String
+  --
+}
+
+class ChannelEntity {
+  + supergroupFlag : Boolean
+  + forumFlag : Boolean
+  + broadcastFlag : Boolean
+  + slowModeInterval : Integer
+  + boostLevel : Integer
+  + adminRightsDescriptor : String
+  + linkedGroupCallId : Integer
+  --
+}
+
+class SequenceTracker {
+  + pointInTimeCounter : Integer
+  + sequenceCounter : Integer
+  + queryCounter : Integer
+  --
+  + determineUpdateAppliesInOrder()
+  + signalDifferenceRequestNeeded()
+}
+
+
+class History {
+  + owningPeer : Peer
+  + unreadMessageCount : Integer
+  + inboxReadUpToPosition : Integer
+  + outboxReadUpToPosition : Integer
+  --
+  + insertMessage()
+  + removeMessage()
+}
+
+class MessageItem {
+  + serverMessageId : Integer
+  + localMessageId : Integer
+  + randomOutgoingId : Integer
+  + sendTimestamp : Integer
+  + localOnlyFlag : Boolean
+  + senderPeerRef : Peer
+  --
+}
+
+
+abstract class MediaEntity {
+  + mediaId : Integer
+  + serverAccessToken : String
+  --
+}
+
+class PhotoEntity {
+  + sizeVariantCount : Integer
+  --
+  + openMediaView()
+}
+
+class DocumentEntity {
+  + contentMimeType : String
+  + fileSize : Integer
+  + fileName : String
+  + originDataCentreId : Integer
+  + thumbnailAvailable : Boolean
+  + streamingCapable : Boolean
+  + localCacheKey : String
+  --
+  + openMediaView()
+}
+
+class MediaView {
+  --
+  + loadedBytes()
+  + loadedThumbnails()
+  + retainInCache()
+  + releaseFromCache()
+}
+
+
+class SessionController {
+  --
+}
+
+class NotificationCenter {
+  --
+}
+
+class DownloadHistoryManager {
+  --
+  + recordCompletedDownload()
+  + trackDownloadVisibility()
+  + persistDownloadsList()
+}
+
+
+DomainContainer "1" *-- "1..*" Account : owns
+Account "1" *-- "0..1" Session : owns
+Account "1" *-- "1" ProtocolEngine : owns
+Session "1" *-- "1" DataModel : owns
+Session "1" *-- "1" ApiFacade : owns
+Session "1" *-- "1" SessionSettings : owns
+Session "1" --> "1" ChangeNotifier : exposes
+
+DataModel "1" *-- "1" ChangeNotifier : owns
+DataModel "1" *-- "1" HistoriesRegistry : owns
+DataModel "1" *-- "1" DialogsList : owns
+DataModel "1" *-- "1" StickersRegistry : owns
+DataModel "1" *-- "1" GroupCallRegistry : owns
+DataModel "1" *-- "1" ReactionsRegistry : owns
+DataModel "1" *-- "*" Peer : owns collection
+DataModel "1" *-- "*" MediaEntity : owns collection
+DataModel "1" *-- "*" MessageItem : owns collection
+
+ReactionsRegistry "1" *-- "*" Reaction : owns
+
+Peer <|-- UserEntity
+Peer <|-- ChatEntity
+Peer <|-- ChannelEntity
+
+ChannelEntity "1" *-- "1" SequenceTracker : owns
+
+HistoriesRegistry "1" *-- "*" History : owns
+
+History "1" --> "1" Peer : belongs to
+History "1" *-- "*" MessageItem : contains
+
+MessageItem "*" --> "1" Peer : references
+MessageItem "*" --> "0..1" MediaEntity : may reference
+MessageItem "*" --> "*" Reaction : may carry
+
+MediaEntity <|-- PhotoEntity
+MediaEntity <|-- DocumentEntity
+
+PhotoEntity ..> MediaView : creates
+DocumentEntity ..> MediaView : creates
+
+ChangeNotifier --> SessionController : notifies
+ChangeNotifier --> NotificationCenter : notifies
+ChangeNotifier --> DownloadHistoryManager : notifies
+
+DownloadHistoryManager "*" --> "1" DataModel : reads entities from
+
+@enduml

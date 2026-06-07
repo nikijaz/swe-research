@@ -1,0 +1,227 @@
+@startuml
+title Media Storage and File Transfer
+
+abstract class FileLoader {
+    + isFinished : Boolean
+    + isCancelled : Boolean
+    + currentProgress : Integer
+    + currentOffset : Integer
+    + totalSize : Integer
+    + loadedBytes : Integer
+    --
+    # {abstract} resolveCacheKey()
+    # {abstract} resolveFileLocationKey()
+    # {abstract} beginRemoteLoading()
+    + cancel()
+}
+
+class MtprotoFileLoader {
+    + cdnRedirectActive : Boolean
+    --
+    + refreshFileReference()
+    + handleCdnRedirect()
+    + verifyCdnPartHashes()
+}
+
+class WebFileLoader {
+    + sourceAddress : String
+    --
+}
+
+class StreamedFileDownloader {
+    --
+}
+
+class DownloadScheduler {
+    + taskCount : Integer
+    + concurrentRequestLimit : Integer
+    --
+    + enqueueTask()
+    + dequeueTask()
+    + terminateIdleSessions()
+    + notifyNonPremiumDelay()
+}
+
+class DownloadTask {
+    + activeRequestCount : Integer
+    --
+    + refreshFileReference()
+    + redirectToCdn()
+}
+
+class UploadManager {
+    + activePartCount : Integer
+    --
+    + uploadPreparedFile()
+    + pauseUploadForMessage()
+    + cancelUploadForMessage()
+    + cancelAllUploads()
+    + selectNextPartAndIndex()
+    + readNextDocumentPart()
+    + retryFailedPart()
+    + signalPhotoReady()
+    + signalDocumentReady()
+}
+
+class FilePreparationTask {
+    + uploadDescriptor : String
+    + preparationResult : String
+    --
+    + executePreparation()
+    + generateThumbnails()
+    + computeMetadata()
+}
+
+class TaskQueue {
+    + pendingTaskCount : Integer
+    --
+    + submitTask()
+    + cancelTaskById()
+}
+
+class Album {
+    + itemCount : Integer
+    --
+}
+
+class StreamingReader {
+    + headerRangeLoaded : Boolean
+    --
+    + serveByteRange()
+    + readSliceFromCache()
+    + writeSliceToCache()
+}
+
+class StreamingLoader {
+    + loadingPriority : Integer
+    + transferSpeedEstimate : Float
+    --
+    + beginLoading()
+    + cancelLoading()
+    + getPartsStream()
+}
+
+class StreamingPlayer {
+    --
+    + decodeMedia()
+    + driveSynchronizedPlayback()
+    + reportPlaybackUpdate()
+    + reportBufferingState()
+    + reportPlaybackError()
+}
+
+class StreamingInstance {
+    + playbackSpeed : Float
+    + currentPlaybackState : String
+    --
+    + getDecodedFrames()
+}
+
+class DownloadHistoryManager {
+    + loadingProgress : Integer
+    --
+    + recordCompletedDownload()
+    + recordInProgressDownload()
+    + updateItemVisibility()
+    + computeDownloadStartDates()
+    + deleteDownloadedFile()
+    + notifyLoadingListChanged()
+    + regenerateMessageEntry()
+    + persistDownloadsList()
+}
+
+class LocalCacheDatabase {
+    + smallFilePartitionSize : Integer
+    + largeFilePartitionSize : Integer
+    --
+    + lookUpCachedBytes()
+    + storeBytesUnderKey()
+}
+
+class AudioPlayer {
+    --
+    + playAudioTrack()
+    + playSoundEffect()
+}
+
+class ProtocolEngine {
+    --
+}
+
+class CdnEdge {
+    --
+}
+
+class AccountStorage {
+    --
+}
+
+class ChangeNotifier {
+    --
+}
+
+class DocumentEntity {
+    --
+}
+
+class PhotoEntity {
+    --
+}
+
+class Session {
+    --
+}
+
+FileLoader <|-- MtprotoFileLoader
+FileLoader <|-- WebFileLoader
+FileLoader <|-- StreamedFileDownloader
+
+MtprotoFileLoader --> DownloadScheduler : schedules requests through
+DownloadScheduler o-- DownloadTask : owns and balances
+DownloadTask --> ProtocolEngine : routes requests through
+MtprotoFileLoader --> CdnEdge : fetches parts from
+
+StreamedFileDownloader --> StreamingReader : drives
+
+TaskQueue o-- FilePreparationTask : runs on worker thread
+TaskQueue o-- Album : groups items
+UploadManager ..> FilePreparationTask : consumes descriptor from
+UploadManager --> ProtocolEngine : uploads parts through
+
+StreamingReader --> StreamingLoader : uses for part fetching
+StreamingReader --> LocalCacheDatabase : reads and writes slices
+StreamingPlayer --> StreamingReader : reads byte ranges from
+StreamingInstance --> StreamingPlayer : client handle to
+AudioPlayer ..> StreamingPlayer : consumes audio track from
+
+FileLoader --> LocalCacheDatabase : checks and writes
+FileLoader ..> DocumentEntity : updates
+FileLoader ..> PhotoEntity : updates
+StreamingReader ..> DocumentEntity : updates
+
+DownloadHistoryManager --> AccountStorage : persists downloads list to
+DownloadHistoryManager --> ChangeNotifier : observes
+DownloadHistoryManager --> Session : scoped per
+
+LocalCacheDatabase --> AccountStorage : configured and keyed through
+
+note top of DownloadScheduler
+  Throttles concurrent requests.
+  Balances tasks by priority
+  across per-DC sessions.
+end note
+
+note top of UploadManager
+  Fires photo-ready or
+  document-ready after all
+  parts are confirmed.
+end note
+
+note right of StreamingReader
+  Combines cached slices with
+  on-demand remote loading so
+  playback can start before full
+  download completes.
+end note
+
+@enduml

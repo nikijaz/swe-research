@@ -1,0 +1,178 @@
+@startuml
+title One-to-One Voice Call Establishment
+
+actor "User (Caller)" as CallerUser
+participant "Call Engine" as CallEngine
+participant "One-to-One Call\n(Caller)" as CallerCall
+participant "Call Delegate" as CallDelegate
+participant "Request Sender" as ReqSender
+participant "Protocol Engine" as ProtoEngine
+participant "Telegram Server" as TgServer
+participant "One-to-One Call\n(Callee)" as CalleeCall
+participant "Media Controller" as MediaCtrl
+participant "Call Panel" as CallPanel
+actor "User (Callee)" as CalleeUser
+
+== Caller: Initiation ==
+
+CallerUser -> CallEngine : initiate outgoing call
+CallEngine -> ProtoEngine : fetch Diffie-Hellman configuration
+ProtoEngine -> TgServer : get DH configuration
+TgServer --> ProtoEngine : DH parameters (prime, generator)
+ProtoEngine --> CallEngine : DH configuration available
+
+CallEngine -> CallEngine : request microphone and camera permissions
+CallEngine -> CallerCall : create One-to-One Call\n(waiting-for-user-confirmation state)
+CallerCall -> CallerCall : transition to requesting state
+
+== Caller: DH Public Value Generation and Request-Call ==
+
+CallerCall -> CallDelegate : obtain Diffie-Hellman configuration
+CallDelegate --> CallerCall : DH parameters
+
+CallerCall -> CallerCall : generate secret power
+CallerCall -> CallerCall : compute DH public value
+CallerCall -> CallerCall : compute hash of public value
+
+CallerCall -> ReqSender : send request-call\n(public-value hash, protocol layers, library versions)
+ReqSender -> ProtoEngine : dispatch request
+ProtoEngine -> TgServer : request-call (public-value hash, protocol info)
+TgServer --> ProtoEngine : waiting call (call ID, access hash)
+ProtoEngine --> ReqSender : protocol response
+ReqSender --> CallerCall : call created (call ID, access hash)
+CallerCall -> CallerCall : transition to waiting state
+CallerCall -> CallerCall : start receive-timeout timer
+
+== Callee: Incoming Call Arrives ==
+
+TgServer -> ProtoEngine : push phone-call-requested update
+ProtoEngine -> CallEngine : route update
+CallEngine -> CalleeCall : create incoming One-to-One Call\n(waiting-incoming state)
+note right of CalleeCall
+  Stores: call ID, access hash,
+  caller public-value hash
+end note
+
+CalleeCall -> ReqSender : send received-call acknowledgement
+ReqSender -> ProtoEngine : dispatch request
+ProtoEngine -> TgServer : received-call
+CalleeCall -> CalleeCall : start ring timer
+CalleeCall -> CallPanel : display incoming call notification
+CallPanel -> CalleeUser : ring and show incoming call
+
+== Caller: Ringing State ==
+
+TgServer -> ProtoEngine : push call-waiting update (receive date)
+ProtoEngine -> CallEngine : route update
+CallEngine -> CallerCall : deliver waiting update
+CallerCall -> CallerCall : transition to ringing state
+CallerCall -> CallDelegate : play ring sound
+note right of CallDelegate
+  Call Delegate uses Audio Player
+  to play the ring sound
+end note
+
+== Callee: User Answers ==
+
+CalleeUser -> CallPanel : answer call
+CallPanel -> CalleeCall : user accepted
+CalleeCall -> CallDelegate : check microphone and camera permissions
+CallDelegate --> CalleeCall : permissions granted
+CalleeCall -> CalleeCall : transition to exchanging-keys state
+CalleeCall -> CalleeCall : generate DH public value
+
+CalleeCall -> ReqSender : send accept-call (callee public value)
+ReqSender -> ProtoEngine : dispatch request
+ProtoEngine -> TgServer : accept-call (callee public value)
+
+note over CalleeCall
+  DH config deferral: if DH configuration
+  is not yet available when user answers,
+  the accept-call is deferred until
+  the configuration arrives
+end note
+
+== Caller: Receives Accepted, Derives Key and Confirms ==
+
+TgServer -> ProtoEngine : push call-accepted update\n(callee public value)
+ProtoEngine -> CallEngine : route update
+CallEngine -> CallerCall : deliver accepted update
+CallerCall -> CallerCall : validate callee public value fields
+CallerCall -> CallerCall : derive shared authorization key\n(callee public value raised to caller secret power\nmodulo the DH prime)
+CallerCall -> CallerCall : compute Key Fingerprint
+note right of CallerCall
+  Key Fingerprint is the fingerprint hash
+  of the shared authorization key and the
+  caller public value, rendered as an emoji
+  sequence for out-of-band verification
+  by both parties
+end note
+
+CallerCall -> ReqSender : send confirm-call\n(caller DH public value, Key Fingerprint)
+ReqSender -> ProtoEngine : dispatch request
+ProtoEngine -> TgServer : confirm-call (caller public value, fingerprint)
+TgServer --> ProtoEngine : confirmed phone call\n(relay endpoints, STUN/TURN)
+ProtoEngine --> ReqSender : protocol response
+ReqSender --> CallerCall : call confirmed with endpoints
+
+== Caller: Start Media Controller and Transition to Established ==
+
+CallerCall -> MediaCtrl : create and start Media Controller\n(shared key, relay endpoints,\nSTUN/TURN, protocol layer, media-device config)
+MediaCtrl -> MediaCtrl : establish real-time audio path\nover WebRTC transport
+CallerCall -> CallerCall : transition to established state
+CallerCall -> CallPanel : show active call\nwith emoji Key Fingerprint
+CallPanel -> CallerUser : display active call and emoji fingerprint
+
+== Callee: Receives Caller Public Value, Verifies Hash, Derives Key ==
+
+TgServer -> ProtoEngine : push phone-call update\n(caller public value, relay endpoints)
+ProtoEngine -> CallEngine : route update
+CallEngine -> CalleeCall : deliver phone-call update
+
+CalleeCall -> CalleeCall : compute hash of received caller public value
+CalleeCall -> CalleeCall : compare hash against stored\ncaller public-value hash
+
+alt hash matches
+    CalleeCall -> CalleeCall : derive shared authorization key\n(caller public value raised to callee secret power\nmodulo the DH prime)
+    CalleeCall -> CalleeCall : compute Key Fingerprint
+    CalleeCall -> MediaCtrl : create and start Media Controller\n(shared key, relay endpoints,\nSTUN/TURN, protocol layer, media-device config)
+    MediaCtrl -> MediaCtrl : establish real-time audio path\nover WebRTC transport
+    CalleeCall -> CalleeCall : transition to established state
+    CalleeCall -> CallPanel : show active call\nwith emoji Key Fingerprint
+    CallPanel -> CalleeUser : display active call and emoji fingerprint
+else hash mismatch
+    CalleeCall -> CalleeCall : fail call (public-value hash mismatch)
+    CalleeCall -> ReqSender : send discard-call (internal error reason)
+    ReqSender -> ProtoEngine : dispatch request
+    ProtoEngine -> TgServer : discard-call
+end
+
+== Active Call: Signaling Relay ==
+
+MediaCtrl -> ReqSender : emit outgoing signaling payload
+ReqSender -> ProtoEngine : send-signaling request
+ProtoEngine -> TgServer : signaling data (opaque payload)
+TgServer -> ProtoEngine : push signaling-data update (peer payload)
+ProtoEngine -> CallEngine : route signaling update
+CallEngine -> MediaCtrl : deliver incoming signaling payload
+
+MediaCtrl -> CallPanel : report audio/video state changes,\nsignal-bar and battery level updates
+
+== End Cases and Error Handling ==
+
+note over CallerCall, CalleeCall
+  Discard-update end cases:
+  - hangup: end call normally
+  - missed or declined: send discard reason to server. if need-rating flag set, show rating box and send set-rating request
+  - busy: transition to busy state
+  - disconnect: end call with disconnect reason
+  - migrate-to-conference: switch main data-centre Group Call and join conference
+end note
+
+note over CallerCall
+  Request errors or failure to derive
+  the shared authorization key transition
+  the call to the failed state
+end note
+
+@enduml

@@ -1,0 +1,133 @@
+@startuml
+title Incoming Update Processing
+
+actor "Telegram Server" as Server
+participant "Protocol Engine" as PE
+participant "Update Dispatcher" as UD
+participant "Sequence Tracker" as ST
+participant "Data Model" as DM
+participant "Histories Registry" as HR
+participant "History" as H
+participant "Change Notifier" as CN
+participant "Session Controller" as SC
+participant "Notification Center" as NC
+
+== Startup: Fetch Initial State ==
+
+UD -> PE : request initial update state
+PE -> Server : get state
+Server --> PE : current counters (pts, qts, seq, date)
+PE --> UD : deliver initial state
+UD -> ST : initialize global counters
+
+== Server-Pushed Update Arrives ==
+
+Server -> PE : push updates payload
+PE -> UD : deliver updates payload
+
+== Classify Payload ==
+
+alt Short form (short message or short chat message)
+    UD -> DM : check referenced users, chats, reply-to, forward, mention entities loaded
+    alt Required entity not loaded
+        UD -> UD : treat as not-loaded
+        UD -> PE : schedule Difference Request (gap due to missing entity)
+        PE -> Server : get difference (full range)
+        Server --> PE : messages, chats, users, new state
+        PE --> UD : deliver difference
+        UD -> DM : apply messages, chats, users
+        UD -> ST : reset counters to server-provided values
+    else All entities loaded
+        UD -> ST : consult global Sequence Tracker with pts/seq/count
+    end
+else Combined updates form
+    UD -> ST : consult global Sequence Tracker for sequence ordering
+end
+
+== Sequence Tracker Decision ==
+
+alt Update is next expected (no gap)
+    ST --> UD : apply update
+    UD -> ST : advance local counter
+else Update is older or duplicate
+    ST --> UD : skip update
+    UD -> UD : discard update
+else Gap detected
+    ST --> UD : gap detected - buffer update and schedule Difference Request
+    UD -> UD : buffer incoming update
+
+    == Gap-Filling via Difference Request ==
+
+    alt Global stream gap
+        UD -> PE : request general difference (from-pts to server pts)
+        PE -> Server : get difference
+        Server --> PE : messages, chats, users, new state
+        PE --> UD : deliver difference
+        UD -> DM : apply difference messages and peer changes
+        UD -> ST : reset global counters to server-provided values
+    else Channel Entity gap
+        UD -> PE : request channel difference (channel, from-pts)
+        PE -> Server : get channel difference
+        alt Normal channel difference
+            Server --> PE : channel messages, chats, users, new pts
+            PE --> UD : deliver channel difference
+            UD -> DM : apply channel messages and peer changes
+            UD -> ST : reset channel Sequence Tracker counters
+        else Over-long channel difference
+            Server --> PE : too long flag
+            PE --> UD : over-long response
+            UD -> DM : trigger full channel reload
+        end
+    end
+
+    UD -> UD : apply buffered update(s)
+end
+
+== Apply Update to Data Model ==
+
+UD -> DM : apply update (message, edit, deletion, read mark,\npeer change, typing action, etc.)
+DM -> HR : locate or create History for target peer
+HR -> H : process Message Item (new or edited)
+H --> HR : message stored
+HR --> DM : done
+
+== Publish Change Events ==
+
+DM -> CN : publish peer, history, and message change events
+
+CN -> SC : history view refresh notification
+SC -> H : refresh affected History display
+
+CN -> NC : new message event
+NC -> NC : apply mute and quiet-hours rules
+NC -> NC : schedule notification via Notification Backend
+
+== Edge Cases ==
+
+group No-updates timeout
+    UD -> PE : send keepalive ping to Telegram Server
+    PE -> Server : ping
+    Server --> PE : pong
+end
+
+group Force-logout service notification
+    UD -> UD : detect force-logout notification kind
+    UD -> SC : trigger logout
+end
+
+group New server session notification
+    UD -> UD : detect new server session created
+    UD -> ST : re-synchronize counters
+    UD -> PE : schedule Difference Request to resync state
+end
+
+group Out-of-order combined updates
+    UD -> UD : wait on sequence timer for missing predecessor
+    alt Predecessor arrives in time
+        UD -> UD : apply in correct sequence order
+    else Timeout waiting for predecessor
+        UD -> PE : schedule Difference Request
+    end
+end
+
+@enduml

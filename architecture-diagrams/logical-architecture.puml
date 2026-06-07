@@ -1,0 +1,130 @@
+@startuml
+title Telegram Desktop - Logical Architecture (C4 Container)
+!include <C4/C4_Container>
+
+Person(user, "User", "Sends and receives messages, media, and calls through the client.")
+
+System_Boundary(client, "Telegram Desktop Client") {
+
+    Container(launcher, "Launcher", "Platform Entry Point", "Parses arguments, prepares the working directory, and starts the application instance inside the Sandbox.")
+
+    Container(sandbox, "Sandbox", "Single-Instance Guard", "Ensures one running copy per data directory and dispatches deferred calls.")
+
+    Container(app_core, "Application Core", "Global Service Root", "Owns global services: Settings Store, Domain Container, Call Engine, Audio Player, Notification Center, and Window Controllers. Drives startup, shutdown via the Quit Coordinator, and proxy and passcode configuration.")
+
+    Container(settings_store, "Settings Store", "Global Storage", "Persists application settings, theme, language pack, and background, independent of any account.")
+
+    Container(domain_container, "Domain Container", "Account Manager", "Owns all configured accounts, manages account activation, multi-account switching, and the aggregate unread badge.")
+
+    Container(account, "Account", "Identity Owner", "A single authenticated identity owning its Protocol Engine, Account Storage partition, and Session. Handles login, logout, and persists protocol authorization.")
+
+    Container(protocol_engine, "Protocol Engine", "Network Facade", "Sole channel to Telegram Server. Owns the Data Centre Registry, Protocol Sessions, Authorization Keys, Config Loader, and delivers updates and responses to callers.")
+
+    Container(account_storage, "Account Storage", "Per-Account Store", "Persists authentication data, drafts, settings, stickers, file locations, and trusted-peer flags, all encrypted with the Local Key.")
+
+    Container(domain_storage, "Domain Storage", "Domain-Level Store", "Holds the account index and the passcode-derived Local Key.")
+
+    Container(session, "Session", "Per-User Runtime", "Per-account runtime aggregate owning the Data Model, API Facade, Update Dispatcher, and Session Settings.")
+
+    Container(session_settings, "Session Settings", "User Preferences", "Per-account user preferences serialized to Account Storage.")
+
+    Container(data_model, "Data Model", "In-Memory Cache", "Authoritative in-memory cache of all peers, messages, media, histories, and related entities. Publishes change events via the Change Notifier.")
+
+    Container(api_facade, "API Facade", "Request Layer", "Wraps protocol requests into typed operations and applies their results to the Data Model via the Protocol Engine.")
+
+    Container(update_dispatcher, "Update Dispatcher", "Update Processor", "Receives server-pushed updates from the Protocol Engine, sequences them, applies them in order to the Data Model, and requests gap-filling differences.")
+
+    Container(notification_center, "Notification Center", "Notification Scheduler", "Schedules incoming-message notifications, applies mute and quiet-hours rules, formats notification text, and delegates display to the Notification Backend.")
+
+    Container(notification_backend, "Notification Backend", "Platform Notifier", "Renders, updates, and clears notifications natively via Platform Integration.")
+
+    Container(platform_integration, "Platform Integration", "OS Abstraction", "Abstracts tray icons, global shortcuts, and file associations.")
+
+    Container(call_engine, "Call Engine", "Call Manager", "Creates and destroys One-to-One Calls and Group Calls, routes call updates, and tracks the current active call.")
+
+    Container(one_to_one_call, "One-to-One Call", "Peer-to-Peer Call", "State machine for a single voice or video call, owning its DH exchange, encryption key, and Media Controller.")
+
+    Container(group_call, "Group Call", "Conference Call", "State machine for a multi-participant call, owning membership, video endpoints, and its Media Controller.")
+
+    Container(media_controller, "Media Controller", "Real-Time Media Engine", "Captures, encrypts, transmits, and renders call audio and video in real time.")
+
+    Container(audio_player, "Audio Player", "Audio Playback", "Plays decoded audio tracks and short sound effects.")
+
+    Container(media_storage, "Media Storage and File Transfer", "Download and Upload Subsystem", "Groups the Download Scheduler, File Loaders, Upload Manager, Streaming Reader and Player, Download History Manager, and Local Cache Database.")
+
+    Container(local_cache_db, "Local Cache Database", "Encrypted Media Store", "Encrypted on-disk key-value store for downloaded media bytes, split into small-file and big-file partitions.")
+
+    Container(window_controller, "Window Controller", "Window Coordinator", "Binds a top-level window to an account and owns the Session Controller.")
+
+    Container(session_controller, "Session Controller", "Navigation Coordinator", "Routes section, peer, and layer navigation, and manages the column layout in the Main Content Widget.")
+
+    Container(main_window, "Main Window", "Top-Level Window", "Platform window hosting the Main Content Widget and the layer stack.")
+
+    Container(main_content_widget, "Main Content Widget", "Central UI Widget", "Hosts the dialog list, the active chat section, and optional third-column sections, and manages slide animations.")
+
+    Container(intro_flow, "Intro Flow", "Pre-Login Wizard", "Sequential steps that collect phone number, verification code, password, and sign-up details before a Session exists.")
+}
+
+System_Ext(telegram_server, "Telegram Server", "Remote infrastructure of data centres that authenticates clients, stores and routes messages, and brokers calls.")
+System_Ext(cdn_edge, "CDN Edge", "Content-delivery server that serves encrypted media parts under data-centre direction.")
+Person_Ext(call_peer, "Call Peer", "The remote participant on the other end of a One-to-One Call or Group Call.")
+
+Rel(launcher, sandbox, "starts application inside")
+Rel(sandbox, app_core, "creates and guards")
+
+Rel(app_core, settings_store, "owns")
+Rel(app_core, domain_container, "owns")
+Rel(app_core, call_engine, "owns")
+Rel(app_core, audio_player, "owns")
+Rel(app_core, notification_center, "owns")
+Rel(app_core, window_controller, "owns")
+
+Rel(domain_container, account, "owns")
+Rel(domain_container, domain_storage, "persists index and key to")
+Rel(account, protocol_engine, "owns")
+Rel(account, account_storage, "owns")
+Rel(account, session, "creates on login and owns")
+
+Rel(session, data_model, "owns")
+Rel(session, api_facade, "owns")
+Rel(session, update_dispatcher, "owns")
+Rel(session, session_settings, "owns")
+
+Rel(api_facade, protocol_engine, "sends requests through")
+Rel(api_facade, data_model, "applies results into")
+Rel(update_dispatcher, protocol_engine, "subscribes to update stream from")
+Rel(update_dispatcher, data_model, "applies updates into")
+Rel(protocol_engine, telegram_server, "connects to over TCP, HTTP, or TLS transport")
+Rel(protocol_engine, account_storage, "persists Authorization Keys through")
+
+Rel(media_storage, protocol_engine, "routes remote requests through")
+Rel(media_storage, local_cache_db, "reads and writes")
+Rel(media_storage, data_model, "updates Media Entities in")
+Rel(media_storage, cdn_edge, "downloads media parts from")
+
+Rel(notification_center, data_model, "subscribes to Change Notifier in")
+Rel(notification_center, notification_backend, "delegates display to")
+Rel(notification_backend, platform_integration, "renders notifications via")
+Rel(notification_backend, audio_player, "plays notification sounds through")
+
+Rel(call_engine, one_to_one_call, "creates and destroys")
+Rel(call_engine, group_call, "creates and destroys")
+Rel(one_to_one_call, media_controller, "drives")
+Rel(group_call, media_controller, "drives")
+Rel(call_engine, api_facade, "signals through")
+Rel(media_controller, call_peer, "exchanges real-time media with")
+Rel(media_controller, telegram_server, "routes signaling through Protocol Engine to")
+
+Rel(window_controller, main_window, "owns")
+Rel(window_controller, session_controller, "owns")
+Rel(session_controller, main_content_widget, "routes navigation in")
+Rel(session_controller, data_model, "reads and subscribes to")
+Rel(main_window, main_content_widget, "hosts")
+
+Rel(intro_flow, protocol_engine, "sends pre-login requests through Request Sender to")
+Rel(intro_flow, account, "triggers Session creation on")
+
+Rel(user, main_window, "interacts with")
+Rel(user, intro_flow, "completes login via")
+
+@enduml

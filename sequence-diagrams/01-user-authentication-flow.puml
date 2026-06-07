@@ -1,0 +1,200 @@
+@startuml
+title User Authentication Flow
+
+actor "User" as User
+participant "Intro Flow" as IntroFlow
+participant "Intro Step" as IntroStep
+participant "Request Sender" as RequestSender
+participant "Protocol Engine" as ProtocolEngine
+participant "Key Creator" as KeyCreator
+participant "Key Binder" as KeyBinder
+participant "RSA Public Key" as RSAPublicKey
+participant "Telegram Server" as TelegramServer
+participant "Account" as Account
+participant "Account Storage" as AccountStorage
+participant "Data Model" as DataModel
+
+== Startup ==
+
+IntroFlow -> IntroStep : create start step
+IntroFlow -> IntroStep : advance to QR step
+User -> IntroFlow : choose phone-number login
+IntroFlow -> IntroStep : advance to phone step
+IntroStep -> RequestSender : create, bind to Protocol Engine
+
+== Authorization Key Creation (Diffie-Hellman Exchange) ==
+
+note over ProtocolEngine, TelegramServer
+  Performed before any authenticated request,
+  once per Data Centre.
+end note
+
+ProtocolEngine -> KeyCreator : initiate key creation for Data Centre
+KeyCreator -> TelegramServer : send prime-and-quotient request
+TelegramServer --> KeyCreator : respond with RSA public-key fingerprints and server nonce
+KeyCreator -> RSAPublicKey : encrypt inner payload with RSA key
+KeyCreator -> TelegramServer : send encrypted client Diffie-Hellman parameters
+TelegramServer --> KeyCreator : send server Diffie-Hellman parameters
+KeyCreator -> KeyCreator : compute Authorization Key
+KeyCreator -> KeyBinder : bind temporary key to persistent key
+KeyBinder -> TelegramServer : send bind-temp-auth-key request
+TelegramServer --> KeyBinder : confirm binding
+KeyBinder --> ProtocolEngine : Authorization Key ready
+
+== Phone Number Submission ==
+
+User -> IntroStep : enter phone number and submit
+IntroStep -> RequestSender : send send-code request (phone number)
+RequestSender -> ProtocolEngine : route request
+ProtocolEngine -> TelegramServer : send-code
+TelegramServer --> ProtocolEngine : sent-code result (phone-code hash)
+ProtocolEngine --> RequestSender : Protocol Response
+RequestSender --> IntroStep : done (phone-code hash)
+IntroFlow -> IntroStep : advance to code step
+
+alt Phone invalid, banned, or flood error
+    TelegramServer --> ProtocolEngine : Protocol Error (invalid / banned / flood)
+    ProtocolEngine --> RequestSender : Protocol Error
+    RequestSender --> IntroStep : fail - show error, refocus field
+end
+
+== Code Verification ==
+
+User -> IntroStep : enter verification code and submit
+IntroStep -> RequestSender : send sign-in request (phone number, phone-code hash, code)
+RequestSender -> ProtocolEngine : route request
+ProtocolEngine -> TelegramServer : sign-in
+
+alt Successful authorization
+    TelegramServer --> ProtocolEngine : authorization (User Entity)
+    ProtocolEngine --> RequestSender : Protocol Response
+    RequestSender --> IntroStep : done - authorization received
+    IntroStep -> Account : create session (authorization)
+
+else Cloud password required
+    TelegramServer --> ProtocolEngine : sign-in result - password needed
+    ProtocolEngine --> RequestSender : Protocol Response
+    RequestSender --> IntroStep : password required
+    IntroStep -> RequestSender : send get-password-state request
+    RequestSender -> ProtocolEngine : route request
+    ProtocolEngine -> TelegramServer : get-password-state
+    TelegramServer --> ProtocolEngine : password state
+    ProtocolEngine --> RequestSender : Protocol Response
+    RequestSender --> IntroStep : done (password state)
+    IntroFlow -> IntroStep : advance to password step
+
+else Sign-up required
+    TelegramServer --> ProtocolEngine : sign-in result - sign-up required
+    ProtocolEngine --> RequestSender : Protocol Response
+    RequestSender --> IntroStep : sign-up required
+    IntroFlow -> IntroStep : advance to sign-up step
+
+else Code invalid, expired, or flood error
+    TelegramServer --> ProtocolEngine : Protocol Error (invalid / expired / flood)
+    ProtocolEngine --> RequestSender : Protocol Error
+    RequestSender --> IntroStep : fail - show error, refocus field
+end
+
+== Alternative: QR Code Login ==
+
+note over IntroStep, TelegramServer
+  Alternative to phone-number flow.
+end note
+
+IntroStep -> RequestSender : send export-login-token request
+RequestSender -> ProtocolEngine : route request
+ProtocolEngine -> TelegramServer : export-login-token
+TelegramServer --> ProtocolEngine : login token
+ProtocolEngine --> RequestSender : Protocol Response
+RequestSender --> IntroStep : done (login token)
+IntroStep -> IntroStep : render token as QR code
+
+loop Token refresh before expiry
+    IntroStep -> RequestSender : send export-login-token request
+    RequestSender -> ProtocolEngine : route request
+    ProtocolEngine -> TelegramServer : export-login-token
+    TelegramServer --> ProtocolEngine : refreshed login token
+    ProtocolEngine --> RequestSender : Protocol Response
+    RequestSender --> IntroStep : done (refreshed token)
+end
+
+alt Scan accepted - migration to another Data Centre required
+    TelegramServer --> ProtocolEngine : migrate-to-data-centre result
+    ProtocolEngine --> IntroStep : migration notice (target Data Centre)
+    IntroStep -> RequestSender : send import-login-token on target Data Centre
+    RequestSender -> ProtocolEngine : route request to target Data Centre
+    ProtocolEngine -> TelegramServer : import-login-token
+    TelegramServer --> ProtocolEngine : authorization (User Entity)
+    ProtocolEngine --> RequestSender : Protocol Response
+    RequestSender --> IntroStep : done - authorization received
+    IntroStep -> Account : create session (authorization)
+
+else Scan accepted - password required
+    TelegramServer --> ProtocolEngine : login-token result - password needed
+    ProtocolEngine --> RequestSender : Protocol Response
+    RequestSender --> IntroStep : password required
+    IntroFlow -> IntroStep : advance to password step
+
+else Scan accepted - authorization direct
+    TelegramServer --> ProtocolEngine : authorization (User Entity)
+    ProtocolEngine --> RequestSender : Protocol Response
+    RequestSender --> IntroStep : done - authorization received
+    IntroStep -> Account : create session (authorization)
+end
+
+== Cloud Password Verification ==
+
+User -> IntroStep : enter cloud password and submit
+IntroStep -> IntroStep : compute password proof from password state
+IntroStep -> RequestSender : send check-password request (password proof)
+RequestSender -> ProtocolEngine : route request
+ProtocolEngine -> TelegramServer : check-password
+
+alt Password correct
+    TelegramServer --> ProtocolEngine : authorization (User Entity)
+    ProtocolEngine --> RequestSender : Protocol Response
+    RequestSender --> IntroStep : done - authorization received
+    IntroStep -> Account : create session (authorization)
+
+else Password incorrect or flood error
+    TelegramServer --> ProtocolEngine : Protocol Error (invalid / flood)
+    ProtocolEngine --> RequestSender : Protocol Error
+    RequestSender --> IntroStep : fail - show error, refocus field
+end
+
+== Sign-Up ==
+
+User -> IntroStep : enter first name, last name, optional photo and submit
+IntroStep -> RequestSender : send sign-up request (name, phone number, phone-code hash)
+RequestSender -> ProtocolEngine : route request
+ProtocolEngine -> TelegramServer : sign-up
+
+alt Sign-up successful
+    TelegramServer --> ProtocolEngine : authorization (User Entity)
+    ProtocolEngine --> RequestSender : Protocol Response
+    RequestSender --> IntroStep : done - authorization received
+    IntroStep -> Account : create session (authorization)
+
+else Flood or invalid data error
+    TelegramServer --> ProtocolEngine : Protocol Error (flood / invalid)
+    ProtocolEngine --> RequestSender : Protocol Error
+    RequestSender --> IntroStep : fail - show error, refocus field
+end
+
+== Session Creation ==
+
+IntroStep -> IntroStep : validate returned User Entity is self
+IntroStep -> Account : create session (authorization, User Entity)
+
+opt Duplicate identity in another Account
+    Account -> Account : log out existing Account with same identity
+end
+
+Account -> AccountStorage : persist protocol authorization
+Account -> AccountStorage : persist main Data Centre identifier
+Account -> DataModel : construct Data Model
+Account -> Account : construct Session with Data Model, API Facade, Update Dispatcher
+Account --> IntroFlow : session ready
+IntroFlow -> IntroFlow : transition to main UI
+
+@enduml

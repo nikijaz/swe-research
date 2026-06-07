@@ -1,0 +1,314 @@
+@startuml
+title Voice and Video Calls
+
+
+package "Application Core and Lifecycle" {
+  class ApplicationCore {
+    --
+    + initiateCallToPeer()
+    + shutdown()
+  }
+}
+
+package "Network and Protocol" {
+  class ProtocolEngine {
+    --
+    + dispatchRequest()
+    + deliverServerUpdate()
+  }
+  class ApiFacade {
+    --
+    + requestCallToPeer()
+    + acceptIncomingCall()
+    + discardActiveCall()
+    + sendSignalingPayload()
+    + fetchGroupCallById()
+    + joinGroupCall()
+    + leaveGroupCall()
+  }
+}
+
+package "Data Model and Cache" {
+  class GroupCallRegistry {
+    --
+    + lookUpSharedCall()
+    + registerSharedCall()
+    + removeSharedCall()
+  }
+  class SharedGroupCall {
+    + callId : Integer
+    + callTitle : String
+    --
+    + updateParticipants()
+    + syncMetadata()
+  }
+}
+
+package "Media Storage and File Transfer" {
+  class AudioPlayer {
+    --
+    + playSoundEffect()
+    + stopPlayback()
+  }
+}
+
+
+package "Voice and Video Calls" {
+
+  interface CallDelegate {
+    --
+    + provideDhConfig()
+    + playCallSound()
+    + createVideoCaptureSource()
+  }
+
+  class CallEngine {
+    + activeCall : OneToOneCall
+    + activeGroupCall : GroupCall
+    + cachedDhConfig : String
+    + cachedServerCallConfig : String
+    --
+    + startOutgoingCall()
+    + answerIncomingCall()
+    + hangUpActiveCall()
+    + joinGroupCall()
+    + routeCallUpdate()
+    + routeSignalingPayload()
+    + refreshDhConfig()
+    + refreshServerCallConfig()
+    + requestMediaPermissions()
+    + showCallPanel()
+  }
+
+  class OneToOneCall {
+    + callState : CallState
+    + dhExchangeMaterial : String
+    + encryptionKey : String
+    + keyFingerprint : KeyFingerprint
+    --
+    + startCall()
+    + answerCall()
+    + hangUp()
+    + redial()
+    + toggleMute()
+    + toggleCamera()
+    + toggleScreenSharing()
+    + handleCallUpdate()
+    + handleSignalingPayload()
+    + migrateToGroupCall()
+  }
+
+  enum CallState {
+    WAITING_FOR_CONFIRMATION
+    REQUESTING
+    WAITING
+    RINGING
+    EXCHANGING_KEYS
+    ESTABLISHED
+    ENDED
+    FAILED
+    BUSY
+    MIGRATING
+  }
+
+  class GroupCall {
+    + callState : CallState
+    + muteState : Boolean
+    + screenSharingActive : Boolean
+    + cameraActive : Boolean
+    --
+    + joinCall()
+    + rejoinCall()
+    + hangUp()
+    + discardCall()
+    + toggleVideoSharing()
+    + toggleScreenSharing()
+    + changeParticipantVolume()
+    + inviteUser()
+    + sendInCallMessage()
+    + handleGroupCallUpdate()
+    + handleEncryptionChainBlock()
+  }
+
+  interface MediaController {
+    --
+    + setNetworkType()
+    + muteMicrophone()
+    + setAudioInputDevice()
+    + setAudioOutputDevice()
+    + setInputVolume()
+    + setOutputVolume()
+    + deliverSignalingPayload()
+    + reportVersionString()
+    + reportDebugInfo()
+    + stopMediaEngine()
+  }
+
+  class ControllerDescriptor {
+    + encryptionKey : String
+    + serverEndpoints : String
+    + protocolLayerId : String
+    + mediaDeviceConfig : String
+    --
+    + onStateChange()
+    + onSignalBarUpdate()
+  }
+
+  class WebrtcController {
+    + descriptor : ControllerDescriptor
+    --
+    + setNetworkType()
+    + muteMicrophone()
+    + setAudioInputDevice()
+    + setAudioOutputDevice()
+    + setInputVolume()
+    + setOutputVolume()
+    + deliverSignalingPayload()
+    + reportVersionString()
+    + reportDebugInfo()
+    + stopMediaEngine()
+  }
+
+  class TgvoipController {
+    + descriptor : ControllerDescriptor
+    --
+    + setNetworkType()
+    + muteMicrophone()
+    + setAudioInputDevice()
+    + setAudioOutputDevice()
+    + setInputVolume()
+    + setOutputVolume()
+    + deliverSignalingPayload()
+    + reportVersionString()
+    + reportDebugInfo()
+    + stopMediaEngine()
+  }
+
+  class KeyFingerprint {
+    + keyHash : String
+    + publicValue : String
+    --
+    + renderAsEmojiSequence()
+    + compareWith()
+  }
+
+  class SignalingRelay {
+    --
+    + sendPayload()
+    + receivePayload()
+  }
+
+  class CallPanel {
+    + activeCall : OneToOneCall
+    + activeGroupCall : GroupCall
+    --
+    + showPanel()
+    + hidePanel()
+    + updateSignalQuality()
+    + refreshVideoStreams()
+    + displayFingerprintBadge()
+  }
+
+  class CallWindow {
+    --
+    + setPanelContent()
+    + raiseToForeground()
+    + closeWindow()
+  }
+
+  class VideoBubble {
+    --
+    + setIncomingVideoTrack()
+    + setOutgoingVideoTrack()
+  }
+
+  class IncomingVideoWidget {
+    --
+    + assignRemoteVideoTrack()
+    + renderVideoFrame()
+  }
+
+  class SignalBars {
+    + signalLevel : Integer
+    --
+    + updateDisplayedLevel()
+    + renderIndicator()
+  }
+
+  class TopBar {
+    + elapsedDuration : Integer
+    --
+    + updateDurationDisplay()
+    + renderBar()
+  }
+
+  class DeviceMenu {
+    --
+    + listInputDevices()
+    + listOutputDevices()
+    + selectActiveDevice()
+  }
+}
+
+
+ApplicationCore *-- CallEngine : owns
+
+CallEngine ..|> CallDelegate : implements
+
+CallEngine "1" *-- "0..1" OneToOneCall : creates and owns
+CallEngine "1" *-- "0..1" GroupCall : creates and owns
+
+OneToOneCall --> CallDelegate : uses
+GroupCall --> CallDelegate : uses
+
+OneToOneCall *-- MediaController : owns
+GroupCall *-- MediaController : owns
+
+MediaController <|.. WebrtcController : implements
+MediaController <|.. TgvoipController : implements
+
+WebrtcController ..> ControllerDescriptor : constructed from
+TgvoipController ..> ControllerDescriptor : constructed from
+
+OneToOneCall *-- KeyFingerprint : computes and owns
+
+GroupCall --> SharedGroupCall : references
+GroupCallRegistry --> SharedGroupCall : owns
+GroupCall ..> GroupCallRegistry : looks up SharedGroupCall via
+
+CallEngine --> SignalingRelay : routes signaling through
+SignalingRelay --> ApiFacade : carries payloads over
+ApiFacade --> ProtocolEngine : dispatches through
+
+CallEngine --> ApiFacade : sends requests via
+
+CallEngine --> AudioPlayer : plays sounds via
+
+CallPanel --> OneToOneCall : presents
+CallPanel --> GroupCall : presents
+CallPanel *-- VideoBubble
+CallPanel *-- SignalBars
+CallPanel *-- TopBar
+CallPanel *-- DeviceMenu
+CallPanel *-- IncomingVideoWidget
+CallPanel --> KeyFingerprint : displays
+
+CallWindow *-- CallPanel : hosts
+
+CallEngine --> CallPanel : shows
+
+OneToOneCall --> CallState : tracks
+GroupCall --> CallState : tracks
+
+note bottom of OneToOneCall
+  Encryption key is derived by Diffie-Hellman exchange.
+  Media Controller is created only after key is agreed.
+  Call may migrate into a Group Call on demand.
+end note
+
+note bottom of MediaController
+  Same abstraction serves one-to-one and group calls.
+  Backend selected by version string at construction time.
+end note
+
+@enduml

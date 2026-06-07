@@ -1,0 +1,113 @@
+@startuml
+title Telegram Desktop - Physical Architecture (C4 Deployment)
+!include <C4/C4_Deployment>
+
+Deployment_Node(desktop, "Desktop Device", "Windows, macOS, or Linux PC") {
+
+    Deployment_Node(os, "Operating System", "Windows, macOS, or Linux") {
+        Deployment_Node(os_services, "OS Services") {
+            Node(tray_svc, "Tray and Notification Service", "OS API", "Renders system tray icon and native notification banners.")
+            Node(audio_hw, "Audio Capture and Playback Devices", "OS Audio Subsystem", "Microphone, speakers, and headset exposed by the OS audio subsystem.")
+            Node(camera_screen, "Camera and Screen Capture", "OS Capture API", "Video capture devices and screen capture API.")
+            Node(global_shortcuts, "Global Shortcut and File Association Service", "OS API", "Intercepts system-wide key bindings and handles file-type associations.")
+        }
+    }
+
+    Deployment_Node(process, "Telegram Desktop Process", "Single process guarded by the Sandbox single-instance mechanism keyed to the data directory") {
+
+        Deployment_Node(app_layer, "Application Layer") {
+            Container(launcher_d, "Launcher", "Platform Entry Point", "Parses arguments, prepares the working directory, and starts the application.")
+            Container(sandbox_d, "Sandbox", "Single-Instance Guard", "Ensures one running copy per data directory.")
+            Container(app_core_d, "Application Core", "Global Service Root", "Root object owning all global services and the Domain Container.")
+            Container(platform_integration_d, "Platform Integration", "OS Abstraction", "Bridges tray, global shortcuts, and file associations to OS services.")
+        }
+
+        Deployment_Node(account_layer, "Account and Session Layer") {
+            Container(domain_container_d, "Domain Container", "Account Manager", "Owns all configured accounts and manages multi-account switching.")
+            Container(account_d, "Account", "Identity Owner", "Owns the Protocol Engine, Account Storage, and Session for one authenticated identity.")
+            Container(session_d, "Session", "Per-User Runtime", "Owns the Data Model, API Facade, Update Dispatcher, and Session Settings.")
+        }
+
+        Deployment_Node(network_layer, "Network Layer") {
+            Container(protocol_engine_d, "Protocol Engine", "Network Facade", "Manages data-centre routing, Authorization Keys, Protocol Sessions, and Transport Connections.")
+        }
+
+        Deployment_Node(data_layer, "Data and Storage Layer") {
+            Container(data_model_d, "Data Model", "In-Memory Cache", "Authoritative in-memory cache of peers, messages, media, and histories.")
+            Container(api_facade_d, "API Facade", "Request Layer", "Issues typed requests and applies results into the Data Model.")
+            Container(update_dispatcher_d, "Update Dispatcher", "Update Processor", "Sequences and applies server-pushed updates to the Data Model.")
+            Container(media_storage_d, "Media Storage and File Transfer", "Download and Upload Subsystem", "Download Scheduler, File Loaders, Upload Manager, Streaming components, and Download History Manager.")
+        }
+
+        Deployment_Node(call_layer, "Call Layer") {
+            Container(call_engine_d, "Call Engine", "Call Manager", "Creates and manages One-to-One Calls and Group Calls.")
+            Container(media_controller_d, "Media Controller", "Real-Time Media Engine", "Captures, encodes, transmits, and renders call audio and video.")
+            Container(audio_player_d, "Audio Player", "Audio Playback", "Plays decoded audio tracks and sound effects.")
+        }
+
+        Deployment_Node(ui_layer, "User Interface Layer") {
+            Container(window_controller_d, "Window Controller", "Window Coordinator", "Binds a top-level window to an account.")
+            Container(session_controller_d, "Session Controller", "Navigation Coordinator", "Routes peer and section navigation in the Main Content Widget.")
+            Container(main_window_d, "Main Window", "Top-Level Window", "Platform window hosting the Main Content Widget and layer stack.")
+            Container(notification_center_d, "Notification Center", "Notification Scheduler", "Schedules and formats incoming-message notifications.")
+            Container(notification_backend_d, "Notification Backend", "Platform Notifier", "Delegates notification display to native OS services.")
+            Container(intro_flow_d, "Intro Flow", "Pre-Login Wizard", "Collects login credentials before a Session exists.")
+        }
+
+        Deployment_Node(storage_layer, "Local Storage Layer") {
+            ContainerDb(account_storage_db, "Account Storage", "Encrypted Binary Files", "Persists authentication data, drafts, settings, and file locations, encrypted with the Local Key.")
+            ContainerDb(domain_storage_db, "Domain Storage", "Encrypted Binary File", "Holds the account index and the passcode-derived Local Key.")
+            ContainerDb(settings_store_db, "Settings Store", "Encrypted Binary File", "Persists global application settings, theme, and language pack.")
+            ContainerDb(local_cache_db_d, "Local Cache Database", "Encrypted Key-Value Store", "Stores downloaded media bytes in small-file and big-file partitions.")
+        }
+    }
+}
+
+Deployment_Node(telegram_infra, "Telegram Infrastructure", "Remote Data Centres") {
+    Deployment_Node(dc_cluster, "Data Centre Cluster") {
+        Node(telegram_server_d, "Telegram Server", "Remote Service", "Authenticates clients, stores and routes messages, manages call brokering, and pushes updates.")
+    }
+    Deployment_Node(cdn_cluster, "CDN Infrastructure") {
+        Node(cdn_edge_d, "CDN Edge", "Remote Service", "Serves encrypted media parts for large file downloads under data-centre direction.")
+    }
+    Deployment_Node(relay_cluster, "Call Relay Infrastructure") {
+        Node(call_relay, "Call Relay Server", "Remote Service", "Relays real-time call media between peers when a direct peer-to-peer path is unavailable.")
+    }
+}
+
+Rel(launcher_d, sandbox_d, "starts application inside")
+Rel(sandbox_d, app_core_d, "creates and guards")
+Rel(app_core_d, domain_container_d, "owns")
+Rel(domain_container_d, account_d, "owns")
+Rel(account_d, session_d, "creates on login")
+Rel(account_d, protocol_engine_d, "owns")
+Rel(session_d, data_model_d, "owns")
+Rel(session_d, api_facade_d, "owns")
+Rel(session_d, update_dispatcher_d, "owns")
+Rel(api_facade_d, protocol_engine_d, "sends requests through")
+Rel(update_dispatcher_d, protocol_engine_d, "receives updates from")
+Rel(media_storage_d, protocol_engine_d, "routes requests through")
+Rel(call_engine_d, api_facade_d, "signals through")
+Rel(window_controller_d, session_controller_d, "owns")
+Rel(notification_center_d, notification_backend_d, "delegates to")
+Rel(intro_flow_d, protocol_engine_d, "sends pre-login requests through")
+
+Rel(account_d, account_storage_db, "reads and writes via Account Storage")
+Rel(domain_container_d, domain_storage_db, "reads and writes via Domain Storage")
+Rel(app_core_d, settings_store_db, "reads and writes via Settings Store")
+Rel(media_storage_d, local_cache_db_d, "reads and writes media parts to")
+Rel(protocol_engine_d, account_storage_db, "persists Authorization Keys in")
+
+Rel(platform_integration_d, tray_svc, "drives tray icon and shortcuts via")
+Rel(notification_backend_d, tray_svc, "delivers native notifications via")
+Rel(audio_player_d, audio_hw, "plays audio through")
+Rel(media_controller_d, audio_hw, "captures and plays call audio through")
+Rel(media_controller_d, camera_screen, "captures video from")
+Rel(platform_integration_d, global_shortcuts, "registers shortcuts with")
+
+Rel(protocol_engine_d, telegram_server_d, "connects over TCP, HTTP, or TLS transport, optionally through a proxy")
+Rel(media_storage_d, cdn_edge_d, "downloads media parts from over HTTP")
+Rel(media_controller_d, call_relay, "exchanges real-time media over UDP")
+Rel(media_controller_d, telegram_server_d, "routes call signaling through Protocol Engine to")
+
+@enduml
